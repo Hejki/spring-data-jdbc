@@ -1,0 +1,270 @@
+/*
+ * Easy setup for gradle projects.
+ * - version: 0.2
+ */
+
+import static groovy.json.JsonOutput.*
+
+def useGroovy = gp('goot.groovy', false)
+def useFlyway = gp('goot.flyway', false)
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'org.springframework.boot:spring-boot-gradle-plugin:1.1.9.RELEASE'
+        classpath 'org.springframework:springloaded:1.2.0.RELEASE'
+        classpath 'org.flywaydb:flyway-gradle-plugin:3.1'
+    }
+}
+
+apply plugin: org.springframework.boot.gradle.SpringBootPlugin
+if (useFlyway) {
+    apply plugin: org.flywaydb.gradle.FlywayPlugin
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+configurations { // create provided configuration
+    provided
+}
+
+dependencies {
+    versionManagement "io.spring.platform:platform-versions:${gp('goot.spring.platform')}@properties"
+
+    def depLogging = gp('goot.log', null)
+    if (depLogging) {
+        def bridgingLegacy = gp('goot.log.bridging', false)
+        logger.debug("Set dependency [log] for {}, bridge: {}", depLogging, bridgingLegacy)
+
+        compile 'org.slf4j:slf4j-api'
+        // TODO uk.org.lidalia:sysout-over-slf4j
+        if ('logback' == depLogging) {
+            compile 'ch.qos.logback:logback-classic'
+            if (bridgingLegacy) {
+                compile 'org.slf4j:jcl-over-slf4j'
+                compile 'org.slf4j:log4j-over-slf4j'
+                compile 'org.slf4j:jul-to-slf4j'
+            }
+        } else if ('log4j' == depLogging) {
+            compile 'log4j:log4j'
+            if (bridgingLegacy) {
+                compile 'org.slf4j:slf4j-log4j12'
+                compile 'org.slf4j:jcl-over-slf4j'
+                compile 'org.slf4j:jul-to-slf4j'
+            }
+        } else if ('jcl' == depLogging) { // commons-logging
+            compile 'org.slf4j:jcl-over-slf4j'
+            if (bridgingLegacy) {
+                compile 'org.slf4j:slf4j-log4j12'
+                compile 'org.slf4j:jul-to-slf4j'
+            }
+        } else if ('jul' == depLogging) { // java.util.logging
+            compile 'org.slf4j:slf4j-jdk14'
+            if (bridgingLegacy) {
+                compile 'org.slf4j:jcl-over-slf4j'
+                compile 'org.slf4j:log4j-over-slf4j'
+            }
+        }
+    }
+
+    if (gp('goot.lombok', false)) {
+        provided 'org.projectlombok:lombok'
+    }
+
+    if (useFlyway) {
+        runtime 'org.flywaydb:flyway-core'
+    }
+
+    def testFramework = gp('goot.test.framework', useGroovy ? 'spock' : 'junit')
+    switch(testFramework) {
+        case 'spock':
+            testCompile 'org.spockframework:spock-core'
+            testCompile 'org.codehaus.groovy:groovy'
+            // fall through
+        case 'junit':
+            testCompile 'junit:junit'
+            break
+        case 'testng':
+            testCompile 'org.testng:testng'
+            if (useGroovy) {
+                testCompile 'org.codehaus.groovy:groovy-testng'
+            }
+            break
+    }
+
+    def bootModules = gp('goot.spring.boot.modules', '').split('\\,')
+    for (module in bootModules) {
+        if (module != '') {
+            compile "org.springframework.boot:spring-boot-starter-${module.trim()}"
+        }
+    }
+}
+
+bootRepackage {
+    // Enable/disable repackaging spring-boot with application
+    enabled = gp('goot.spring.boot.repackage', false)
+    // Repackage main class
+    mainClass = gp('goot.spring.boot.mainClass', project.mainClassName)
+}
+
+defaultTasks = ['tasks'] // Default task to print tasks ;)
+
+/**
+ * Set project properties
+ */
+if (hasProperty('project.group')) project.group = gp('project.group')
+if (hasProperty('project.version')) project.version = gp('project.version')
+if (hasProperty('project.description')) project.description = gp('project.description')
+
+/**
+ * Set java plugin
+ */
+if (hasProperty('goot.java')) {
+    logger.debug("Using java version: {}", gp('goot.java'))
+
+    allprojects {
+        apply plugin: 'java'
+
+        sourceCompatibility = gp('goot.java')
+        sourceSets.each { sourceSet ->
+            sourceSet.compileClasspath += configurations.provided
+            sourceSet.ext.delombokDir = new File(buildDir, "generated-src/delombok/${sourceSet.name}")
+        }
+
+        jar {
+            if (project.hasProperty('project.organization')) {
+                manifest.attributes['Specification-Vendor'] = gp('project.organization')
+                manifest.attributes['Implementation-Vendor'] = gp('project.organization')
+            }
+
+            manifest.attributes['Build-By'] = "${System.getProperty("user.name")} (${System.getProperty("os.name")} ${System.getProperty("os.version")}, arch: ${System.getProperty("os.arch")})"
+            manifest.attributes['Created-By'] = "${System.getProperty("java.version")} (${System.getProperty("java.vendor")})"
+            manifest.attributes['Gradle-Version'] = gradle.gradleVersion
+            manifest.attributes['Specification-Title'] = project.name
+            manifest.attributes['Specification-Version'] = project.version
+            manifest.attributes['Implementation-Title'] = "${project.group}:${project.name}"
+
+            def scmRev = gitRevision()
+            manifest.attributes['Implementation-Version'] = "${project.version}, ${date()}"
+            if (scmRev) {
+                manifest.attributes['Implementation-Version'] += ", ${scmRev}"
+            }
+        }
+    }
+}
+
+/**
+ * Set groovy plugin
+ */
+if (useGroovy) {
+    logger.debug("Use groovy in project")
+
+    allprojects {
+        apply plugin: 'groovy'
+    }
+}
+
+/**
+ * Get required goot property value be name
+ */
+def gp(String propertyName) {
+    project.property(propertyName)
+}
+
+/**
+ * Get optional goot property value be name, with default value
+ */
+def gp(String propertyName, def defaultValue) {
+    if (defaultValue != null && defaultValue.class == Boolean) {
+        return Boolean.valueOf(project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue)
+    }
+
+    return project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue
+}
+
+/**
+ * Get current date and time in ISO format
+ */
+def date() {
+    new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+}
+
+def gitRevision() { //TODO check if project run on git
+    return "git rev-parse --short HEAD".execute().text
+}
+
+/**
+ * Prints goot properties
+ */
+task(gootProperties) {
+    description = 'Prints all defined goot properties with actual values.'
+    group = 'goot'
+} << {
+    def gootProps = project.properties.findAll {it.key.startsWith('goot.')}.sort()
+    logger.lifecycle('All goot properties: {}', prettyPrint(toJson(gootProps)))
+}
+
+/**
+ * Delombok code
+ */
+if (gp('goot.lombok', false)) {
+    task(gootDelombok) {
+        description = "Delombok source code, output to: '$buildDir/generated-src/delombok/'"
+        group = 'goot'
+        dependsOn configurations.compile
+        dependsOn configurations.provided
+    } << {
+        File jarFile = null;
+        configurations.provided.resolvedConfiguration.resolvedArtifacts.find {
+            println it
+            if ("lombok".equals(it.name)) {
+                jarFile = it.file;
+            }
+        }
+
+        sourceSets.each{ sourceSet ->
+            def classPath = sourceSet.compileClasspath.files.join(";")
+            sourceSet.ext.delombokDir.mkdirs();
+
+            javaexec {
+                main = "-jar"
+                args jarFile, "delombok"
+                if (!classPath.empty) {
+                    args "-c", classPath
+                }
+                args "-d", sourceSet.ext.delombokDir
+                args sourceSet.allJava.srcDirs
+            }
+        }
+    }
+}
+
+/**
+ * IntelliJ IDEA support
+ */
+apply plugin: 'idea'
+
+idea {
+    module {
+        scopes.PROVIDED.plus += [configurations.provided]
+        inheritOutputDirs = false
+        outputDir = file("$buildDir/classes/main/")
+    }
+}
+/**
+ * Extra features
+ */
+if (hasProperty('goot.extra')) {
+    gp('goot.extra').split(',').each {
+        switch (it.toString().trim()) {
+            case 'build-dashboard':
+                apply plugin: 'build-dashboard'
+                break
+        }
+    }
+}

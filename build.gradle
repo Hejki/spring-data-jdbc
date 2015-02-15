@@ -1,0 +1,13 @@
+apply from: 'goot.gradle'
+
+dependencies {
+    compile(
+            'org.springframework.data:spring-data-commons',
+            'org.springframework:spring-jdbc',
+            'org.springframework:spring-context',
+            'org.postgresql:postgresql:9.4-1200-jdbc41',
+
+            'org.springframework.boot:spring-boot-starter-jdbc',
+//            'javax.enterprise:cdi-api', // provided
+    )
+}
